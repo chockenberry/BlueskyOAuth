@@ -21,6 +21,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		440E3AD62D4C49F600ADD67E /* Documentation */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Documentation;
+			sourceTree = "<group>";
+		};
 		4452F7832D4C0BD400B80BEC /* BlueskyOAuth */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -45,6 +50,7 @@
 		4452F7782D4C0BD300B80BEC = {
 			isa = PBXGroup;
 			children = (
+				440E3AD62D4C49F600ADD67E /* Documentation */,
 				4452F7832D4C0BD400B80BEC /* BlueskyOAuth */,
 				4452F7822D4C0BD400B80BEC /* Products */,
 			);
@@ -74,6 +80,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				440E3AD62D4C49F600ADD67E /* Documentation */,
 				4452F7832D4C0BD400B80BEC /* BlueskyOAuth */,
 			);
 			name = BlueskyOAuth;

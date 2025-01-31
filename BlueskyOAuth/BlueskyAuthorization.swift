@@ -19,8 +19,36 @@ internal class BlueskyAuthorization: NSObject {
 
 	// MARK: - Authorize
 	
+	// https://atproto.com/specs/oauth#summary-of-authorization-flow
+	
+	// client metadata:
+	/*
+	 {
+	   "client_id": "https://furbo.org/stuff/client-metadata.json",
+	   "application_type": "native",
+	   "client_name": "BlueskyOAuth iOS App",
+	   "client_uri": "https://furbo.org",
+	   "dpop_bound_access_tokens": true,
+	   "grant_types": [
+		 "authorization_code",
+		 "refresh_token"
+	   ],
+	   "redirect_uris": [
+		 "boat://oauth"
+	   ],
+	   "response_types": [
+		 "code"
+	   ],
+	   "scope": "atproto transition:generic",
+	   "token_endpoint_auth_method": "none"
+	 }
+	 */
+
 	@MainActor // NOTE: ASWebAuthenticationSession uses a window, so it needs to be on the main thread.
 	func authorize() async -> (accessToken: String?, refreshToken: String?, error: Error?) {
+		// get the pushed authorization request (PAR)
+		let pushedAuthorizationRequestUri = await getPushedAuthorizationRequestUri()
+		
 		// start the OAuth authorization flow
 		let result = await withCheckedContinuation({ continuation in
 			oauthAuthorize(clientId: clientId) { accessToken, refreshToken, error in
@@ -31,7 +59,75 @@ internal class BlueskyAuthorization: NSObject {
 		return result
 	}
 	
-	// https://atproto.com/specs/oauth#summary-of-authorization-flow
+	// authorization server metadata: https://bsky.social/.well-known/oauth-authorization-server
+	/* relevant fields:
+		"issuer" : "https://bsky.social",
+		"pushed_authorization_request_endpoint" : "https://bsky.social/oauth/par",
+		"authorization_endpoint" : "https://bsky.social/oauth/authorize",
+		"token_endpoint" : "https://bsky.social/oauth/token",
+		"scopes_supported" : [
+			"atproto",
+			"transition:generic",
+			"transition:chat.bsky"
+		],
+	 */
+
+	func getPushedAuthorizationRequestUri() async -> String? {
+		let link = "https://bsky.social/oauth/par"
+		if let url = URL(string: link) {
+			let state = String(Int(Date.timeIntervalSinceReferenceDate))
+			
+			var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+			// parameters per: https://atproto.com/specs/oauth#authorization-requests
+			let parameters = [
+				"client_id": clientId,
+				"response_type": "code",
+				"code_challenge": "value",
+				"code_challenge_method": "S256",
+				"state": state,
+				"redirect_uri": appRedirectUri,
+				"scope": "atproto",
+				"login_hint": "aloginhint",
+			]
+			
+			request.httpMethod = "POST"
+			request.httpBody = URLUtilities.createPostBody(with: parameters)
+			
+			do {
+				let (data, response) = try await URLSession.shared.data(for: request)
+				if let httpResponse = response as? HTTPURLResponse {
+					if httpResponse.statusCode == 200 {
+						if let object = try? JSONSerialization.jsonObject(with: data) {
+							print("JSON => \(object)")
+							return "something"
+						}
+					}
+					else {
+						if let object = try? JSONSerialization.jsonObject(with: data) {
+							/*
+							 po object
+							 ▿ 2 elements
+							   ▿ 0 : 2 elements
+								 - key : error
+								 - value : invalid_redirect_uri
+							   ▿ 1 : 2 elements
+								 - key : error_description
+								 - value : Invalid redirect URI scheme "boat:"
+							 */
+							print("\(httpResponse.statusCode): JSON => \(object)")
+						}
+						else if let body = String(data: data, encoding: .utf8) {
+							print("\(httpResponse.statusCode): body = '\(body)'")
+						}
+					}
+				}
+			}
+			catch {
+				print("PAR exception = \(error.localizedDescription)")
+			}
+		}
+		return nil
+	}
 	
 	func oauthAuthorize(clientId: String, completionHandler: @escaping BlueskyAuthorization.CompletionHandler) {
 		
@@ -40,7 +136,7 @@ internal class BlueskyAuthorization: NSObject {
 
 		let state = Int(Date.timeIntervalSinceReferenceDate)
 		
-		let link = "https://bsky.social" // something from PAR?
+		let link = "https://bsky.social" // something from pushedAuthorizationRequestUri?
 		
 		do {
 			let endpoint = "\(link)?client_id=\(clientId)&response_type=\(type)&redirect_uri=\(appRedirectUri)&scope=\(scope)&state=\(state)"
