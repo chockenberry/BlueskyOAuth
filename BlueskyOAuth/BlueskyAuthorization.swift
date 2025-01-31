@@ -14,7 +14,7 @@ internal class BlueskyAuthorization: NSObject {
 	
 	var authenticationSession: ASWebAuthenticationSession?
 	
-	private let appRedirectUri = "boat://oauth"
+	private let appRedirectUri = "org.furbo:/oauth"
 	private let clientId = "https://furbo.org/stuff/client-metadata.json"
 
 	// MARK: - Authorize
@@ -47,11 +47,13 @@ internal class BlueskyAuthorization: NSObject {
 	@MainActor // NOTE: ASWebAuthenticationSession uses a window, so it needs to be on the main thread.
 	func authorize() async -> (accessToken: String?, refreshToken: String?, error: Error?) {
 		// get the pushed authorization request (PAR)
-		let pushedAuthorizationRequestUri = await getPushedAuthorizationRequestUri()
+		guard let pushedAuthorizationRequestUri = await getPushedAuthorizationRequestUri() else {
+			return (nil, nil, BlueskyAuthorizationError.server(detail: "No PAR request URI"))
+		}
 		
 		// start the OAuth authorization flow
 		let result = await withCheckedContinuation({ continuation in
-			oauthAuthorize(clientId: clientId) { accessToken, refreshToken, error in
+			oauthAuthorize(clientId: clientId, requestUri: pushedAuthorizationRequestUri) { accessToken, refreshToken, error in
 				continuation.resume(returning: (accessToken, refreshToken, error))
 			}
 		})
@@ -76,19 +78,25 @@ internal class BlueskyAuthorization: NSObject {
 		let link = "https://bsky.social/oauth/par"
 		if let url = URL(string: link) {
 			let state = String(Int(Date.timeIntervalSinceReferenceDate))
+
+			let codeVerifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+			//let codeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+			// code_challenge = BASE64URL-ENCODE(SHA256(ASCII(code_verifier)))
+			let codeChallenge = "whatever"
 			
 			var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
 			// parameters per: https://atproto.com/specs/oauth#authorization-requests
 			let parameters = [
 				"client_id": clientId,
 				"response_type": "code",
-				"code_challenge": "value",
-				"code_challenge_method": "S256",
+				"code_challenge": codeChallenge, // clients must generate new, unique, random challenges for every authorization request
+				"code_challenge_method": "S256", // the S256 challenge method must be supported by all clients and Authorization Servers
 				"state": state,
 				"redirect_uri": appRedirectUri,
 				"scope": "atproto",
 				"login_hint": "aloginhint",
 			]
+			
 			
 			request.httpMethod = "POST"
 			request.httpBody = URLUtilities.createPostBody(with: parameters)
@@ -96,10 +104,15 @@ internal class BlueskyAuthorization: NSObject {
 			do {
 				let (data, response) = try await URLSession.shared.data(for: request)
 				if let httpResponse = response as? HTTPURLResponse {
-					if httpResponse.statusCode == 200 {
+					if httpResponse.statusCode == 201 {
 						if let object = try? JSONSerialization.jsonObject(with: data) {
 							print("JSON => \(object)")
-							return "something"
+							if let dictionary = object as? Dictionary<String,Any> {
+								if let requestUri = dictionary["request_uri"] as? String {
+									// example: urn:ietf:params:oauth:request_uri:req-7f1d3b2c667257cd9e8d9f0c2b5876ef
+									return requestUri
+								}
+							}
 						}
 					}
 					else {
@@ -129,17 +142,18 @@ internal class BlueskyAuthorization: NSObject {
 		return nil
 	}
 	
-	func oauthAuthorize(clientId: String, completionHandler: @escaping BlueskyAuthorization.CompletionHandler) {
+	func oauthAuthorize(clientId: String, requestUri: String, completionHandler: @escaping BlueskyAuthorization.CompletionHandler) {
 		
 		let type = "code"
 		let scope = "atproto"
 
 		let state = Int(Date.timeIntervalSinceReferenceDate)
 		
-		let link = "https://bsky.social" // something from pushedAuthorizationRequestUri?
+		let link = "https://bsky.social/oauth/authorize" // something from pushedAuthorizationRequestUri?
 		
 		do {
-			let endpoint = "\(link)?client_id=\(clientId)&response_type=\(type)&redirect_uri=\(appRedirectUri)&scope=\(scope)&state=\(state)"
+			//let endpoint = "\(link)?client_id=\(clientId)&response_type=\(type)&redirect_uri=\(appRedirectUri)&scope=\(scope)&state=\(state)"
+			let endpoint = "\(link)?request_uri=\(requestUri)"
 			if let authorizeUrl = URL(string:endpoint) {
 				let callbackUrlScheme = URL(string: appRedirectUri)!.scheme
 				
